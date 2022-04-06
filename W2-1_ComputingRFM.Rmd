@@ -1,0 +1,141 @@
+---
+title: "W2-1_ComputingRFM"
+author: "Taufiqur Rohman"
+date: '2022-03-31'
+output: html_document
+---
+
+**OBJECTIVE:** 
+1. Calculate the Recency, Frequency, and Monetary Value of the customers (RFM)
+2. Creating segmentation for the customers from the RFM variables
+
+## Reading and Cleaning the Data
+
+Read the data using read.delim, because the txt source file is separated by tab.
+
+```{r read data frame}
+df_purchase <- read.delim("purchases.txt", header = FALSE, sep = "\t", dec = ".")
+```
+
+Display what has loaded in the data
+
+```{r explore data}
+head(df_purchase) # Check first 5 first records
+summary(df_purchase) # Check mean, median, max, min, etc.
+str(df_purchase) # Check the data type
+```
+
+I found that there are no column names in the data. So, I label all of the columns using the colnames() function.
+
+```{r adding column names}
+colnames(df_purchase) <- c("cust_id", "purchase_amt", "date_of_purchase")
+```
+
+I also found that the the data format of "date_of_purchase" is still numeric. Let's convert it to date. Also, I want to know the how many days elapsed to the date of purchase since January 1st, 2016. This will be helpful for us to calculate the Recency.
+
+```{r converting to date format}
+df_purchase$date_of_purchase <- as.Date(df_purchase$date_of_purchase, "%Y-%m-%d")
+df_purchase$days_since <- as.numeric(difftime(time1 = "2016-01-01",
+                                           time2 = df_purchase$date_of_purchase,
+                                           units = "days"))
+```
+
+Let's check it out again the end to confirm the data set is clean and ready to be analyzed.
+
+```{r explore data again}
+head(df_purchase)
+summary(df_purchase)
+str(df_purchase)
+```
+
+For now, lets calculate the RFM. I will use the sqldf package so I can write SQL statement in R environment as it is easier to do that.
+
+```{r sql statement}
+sql_rfm <- sqldf("SELECT
+                    cust_id,
+                    MIN(days_since) as 'R_recency',
+                    COUNT(*) as 'F_frequency',
+                    AVG(purchase_amt) as 'M_monval'
+                  FROM
+                    df_purchase
+                  GROUP BY
+                    cust_id")
+```
+
+## Visualizing the Data
+
+To see the data distribution clearer, I would like to create several visualizations to help us in understanding the data.
+
+```{r using histogram to read data}
+# Big picture of the data
+summary(sql_rfm) 
+
+# Distribution of the data
+hist(sql_rfm$R_recency, main = "Recency Distribution", xlab = "Days Elapsed")
+hist(sql_rfm$F_frequency, main = "Frequency Distribution", xlab = "Number of Purchases")
+hist(sql_rfm$M_monval, main = "Monetary Value Distribution", xlab = "in USD", breaks = 100)
+```
+
+## Preparing Data Frame for Segmentation
+
+The data is clean and set. Now, for the last thing, as we want to do the segmentation analysis, let's prepare so they are ready to be analyzed.
+
+```{r preparing data frame}
+# Duplicate the data frame
+df_purchase_new <- sql_rfm
+
+# Make Customer ID as the row name
+row.names(df_purchase_new) <- df_purchase_new$cust_id
+df_purchase_new$cust_id <- NULL
+head(df_purchase_new)
+
+# Transform monetary value variable to log as it is very skewed to the left
+df_purchase_new$M_monval <- log(df_purchase_new$M_monval)
+hist(df_purchase_new$M_monval, main = "Log Monetary Value Distribution", xlab = "in USD")
+
+# Standardizing all of the variables
+df_purchase_new <- scale(df_purchase_new)
+
+# Final check
+head(df_purchase_new)
+summary(df_purchase_new)
+```
+
+## Running the Hierarchical Segmentation
+
+The data is ready. I will perform the hierarchical segmentation now.
+
+```{r preparing the data set}
+## Split train set using 10% of the sample size
+smp_size <- floor(0.1 * nrow(df_purchase_new))
+
+set.seed(123)
+train_ind <- sample(seq_len(nrow(df_purchase_new)), size = smp_size)
+
+df_sample <- sql_rfm[train_ind, ]
+df_train <- df_purchase_new[train_ind, ]
+df_test <- df_purchase_new[-train_ind, ]
+```
+
+```{r performing clustering}
+# Performing clustering
+d <- dist(df_train)
+c <- hclust(d, method = "ward.D2")
+
+plot(c, xlab = "Customers")
+
+# Cutting to the optimum cluster
+# Based on statistical fit (dendogram) and managerial relevance
+segments <- cutree(c, k = 9)
+```
+
+```{r exploring the data} 
+segments[1:30]
+table(segments)
+```
+
+```{r checking the aggregate of every segments}
+segment_final <- aggregate(df_sample[ , 2:4], by = list(segments), FUN = mean)
+```
+
+By doing this analysis, I have successfully created 9 groups for this customer data based on their Recency, Frequency, and amount of money spent in the company.

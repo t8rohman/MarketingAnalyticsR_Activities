@@ -1,0 +1,243 @@
+---
+title: "W3-2_QuizModule2"
+author: "Taufiqur Rohman"
+date: '2022-04-04'
+output: html_document
+---
+
+To validate Module 2 and correctly answer the questions will require that you perform the following exercise first: take the code in the file named module2.R, and modify it such that the managerial segment "new active" is divided into two sub-segments called "new active high" (with an average purchase amount of 100 dollar or more) and "new active low" (with an average purchase amount of less than 100 dollar). Tips: make sure that you apply that modification to both the 2015 and 2014 segmentations, and that you modify accordingly the code that re-order the factor "segment".
+
+So, I will modify the coding that I have performed in the previous exercise (refer to W3-1_CodingManagerialSegmentation)
+
+## Reading and Cleaning the Data
+
+```{r read data frame}
+df_purchase <- read.delim("purchases.txt", header = FALSE, sep = "\t", dec = ".")
+colnames(df_purchase) <- c("cust_id", "purchase_amt", "date_of_purchase")
+
+# Converting data format and adding Recency column
+df_purchase$date_of_purchase <- as.Date(df_purchase$date_of_purchase, "%Y-%m-%d")
+df_purchase$days_since <- as.numeric(difftime(time1 = "2016-01-01",
+                                           time2 = df_purchase$date_of_purchase,
+                                           units = "days"))
+```
+
+```{r exploring data}
+head(df_purchase)
+summary(df_purchase)
+```
+
+```{r creating customer data for 2015}
+# Load the library
+library(sqldf)
+
+# Create the data frame
+cust_2015 <- sqldf("SELECT
+                    cust_id, 
+                    MIN(days_since) AS 'recency',
+                    MAX(days_since) AS 'first_purchase',
+                    COUNT(*) AS 'frequency',
+                    AVG(purchase_amt) AS 'monvalue'
+                  FROM
+                    df_purchase
+                  GROUP BY
+                    cust_id")
+```
+
+```{r exploring 2015 customer data}
+# Prerequisite exploring
+head(cust_2015)
+summary(cust_2015)
+
+# Data distribution
+hist(cust_2015$recency)
+hist(cust_2015$first_purchase)
+hist(cust_2015$frequency)
+hist(cust_2015$monvalue, breaks = 100)
+```
+
+## Coding the Managerial Segmentation
+
+This is the section where I should make a change. I will make a change based on what question want me to do. 
+
+```{r generating segmentation}
+# Create the segment variable
+cust_2015$segment <- "NA"
+
+# Create the segmentation
+cust_2015$segment[which(cust_2015$recency > 365*3)] <- "inactive"
+cust_2015$segment[which(cust_2015$recency <= 365*3 & cust_2015$recency > 365*2)] <- "cold"
+cust_2015$segment[which(cust_2015$recency <= 365*2 & cust_2015$recency > 365*1)] <- "warm"
+cust_2015$segment[which(cust_2015$recency <= 365)] = "active"
+cust_2015$segment[which(cust_2015$segment == "warm" & cust_2015$first_purchase <= 365*2)] = "new warm"
+cust_2015$segment[which(cust_2015$segment == "warm" & cust_2015$monvalue < 100)] <- "warm low value"
+cust_2015$segment[which(cust_2015$segment == "warm" & cust_2015$monvalue >= 100)] <- "warm high value"
+cust_2015$segment[which(cust_2015$segment == "active" & cust_2015$first_purchase <= 365)] = "new active"
+
+# This is what different from previous exercise
+cust_2015$segment[which(cust_2015$segment == "new active" & cust_2015$monvalue >= 100)] = "new active high"
+cust_2015$segment[which(cust_2015$segment == "new active" & cust_2015$monvalue <= 100)] = "new active low"
+
+cust_2015$segment[which(cust_2015$segment == "active" & cust_2015$monvalue < 100)] <- "active low value"
+cust_2015$segment[which(cust_2015$segment == "active" & cust_2015$monvalue >= 100)] <- "active high value"
+
+# Check the result
+table(cust_2015$segment)
+cust2015agg <- aggregate(x = cust_2015[, 2:5], by = list(cust_2015$segment), mean)
+```
+
+```{r ordering segmentation}
+cust_2015$segment <- factor(x = cust_2015$segment, 
+                           levels = c("inactive", "cold", "warm high value", "warm low value", "new warm", "active high value", "active low value", "new active high", "new active low"))
+
+table(cust_2015$segment)
+pie(table(cust_2015$segment))
+aggregate(x = cust_2015[, 2:5], by = list(cust_2015$segment), mean)
+```
+
+I am done in creating the data for customers in 2015. Not forget to make modification for the customer 2014 data.
+
+```{r creating 2014 customer data}
+cust_2014 <- sqldf("SELECT
+                    cust_id, 
+                    MIN(days_since) - 365 AS 'recency',
+                    MAX(days_since) - 365 AS 'first_purchase',
+                    COUNT(*) AS 'frequency',
+                    AVG(purchase_amt) AS 'monvalue'
+                  FROM
+                    df_purchase
+                  WHERE
+                    days_since > 365
+                  GROUP BY
+                    cust_id")
+```
+
+Let's segment the 2014 customer data using the same code as the 2015 customer data.
+
+```{r generating segmentation for 2014 customer data}
+# Reset the variable first
+cust_2014$segment = "NA"
+
+# Create the segmentation
+cust_2014$segment[which(cust_2014$recency > 365*3)] = "inactive"
+cust_2014$segment[which(cust_2014$recency <= 365*3 
+                             & cust_2014$recency > 365*2)] = "cold"
+cust_2014$segment[which(cust_2014$recency <= 365*2 
+                             & cust_2014$recency > 365*1)] = "warm"
+cust_2014$segment[which(cust_2014$recency <= 365)] = "active"
+cust_2014$segment[which(cust_2014$segment == "warm" 
+                             & cust_2014$first_purchase <= 365*2)] = "new warm"
+cust_2014$segment[which(cust_2014$segment == "warm" 
+                             & cust_2014$monvalue < 100)] = "warm low value"
+cust_2014$segment[which(cust_2014$segment == "warm" 
+                             & cust_2014$monvalue >= 100)] = "warm high value"
+cust_2014$segment[which(cust_2014$segment == "active" 
+                             & cust_2014$first_purchase <= 365)] = "new active"
+
+cust_2014$segment[which(cust_2014$segment == "new active" 
+                        & cust_2014$monvalue < 100)] <- "new active low"
+cust_2014$segment[which(cust_2014$segment == "new active" 
+                        & cust_2014$monvalue >= 100)] <- "new active high"
+
+cust_2014$segment[which(cust_2014$segment == "active" 
+                             & cust_2014$monvalue < 100)] = "active low value"
+cust_2014$segment[which(cust_2014$segment == "active" 
+                             & cust_2014$monvalue >= 100)] = "active high value"
+
+# Check the result
+table(cust_2014$segment)
+pie(table(cust_2014$segment))
+cust2014agg <- aggregate(x = cust_2014[, 2:5], by = list(cust_2014$segment), mean)
+```
+
+```{r ordering segmentation}
+cust_2014$segment <- factor(x = cust_2014$segment, 
+                           levels = c("inactive", "cold", "warm high value", "warm low value", "new warm", "active high value", "active low value", "new active high", "new active low"))
+
+table(cust_2014$segment)
+pie(table(cust_2014$segment))
+aggregate(x = cust_2014[, 2:5], by = list(cust_2014$segment), mean)
+```
+
+## Calculating Revenue Generated From Customers in 2014 and 2015
+
+```{r creating 2015 revenue data frame}
+df_purchase$year_of_purchase <- format(df_purchase$date_of_purchase, format="%Y")
+
+rev_2015 <- sqldf("SELECT
+                    cust_id,
+                    SUM(purchase_amt) AS 'rev_2015'
+                  FROM
+                    df_purchase
+                  WHERE
+                    year_of_purchase = '2015'
+                  GROUP BY
+                    cust_id")
+
+summary(rev_2015)
+```
+
+```{r creating actual customer and revenue in 2015}
+actual <- merge(cust_2015, rev_2015, all.x = TRUE)
+actual$rev_2015[is.na(actual$rev_2015)] = 0
+
+aggregate(x = actual$rev_2015, by = list(cust_2015$segment), FUN = mean)
+```
+
+```{r creating forward 2014 customer and revenue in 2015}
+forward <- merge(cust_2014, rev_2015, all.x = TRUE)
+forward$rev_2015[is.na(forward$rev_2015)] = 0
+```
+
+```{r aggregating}
+# Show average revenue per customer and per segment
+r <- aggregate(x = forward$rev_2015, by = list(cust_2014$segment), mean)
+print(r)
+
+# Re-order and display results
+r = r[order(r$x, decreasing = TRUE), ]
+print(r)
+barplot(r$x, names.arg = r$Group.1)
+```
+
+## Questions : Solve the Problem
+
+1. How many "new active low" customers were there in 2015? *Answer: 1249*
+
+```{r q1}
+table(cust_2015$segment)
+```
+
+2. The number of "new active high" customers has increased between 2014 and 2015. What is the rate of that increase? *Answer: 29.6%*
+
+```{r q2}
+cust_2015 %>% 
+  count(segment) %>% 
+  filter(segment == "new active high")
+
+cust_2014 %>% 
+  count(segment) %>% 
+  filter(segment == "new active high")
+
+(263 - 203) / 203
+```
+
+3. Regarding the customers  who belonged to the "new warm" segment in 2014, what was there expected revenue, all things considered, in 2015? *Answer: 5.064*
+
+```{r q3}
+r$x[which(r$Group.1 == "new warm")]
+```
+
+4. In terms of expected revenue, which segment groups the least profitable customers? *Answer: Inactive*
+
+```{r q4}
+r %>% 
+  slice(which.min(x)) %>% 
+  select(Group.1)
+```
+
+5. Looking at segment description, what is the average purchase amount of a customer who belongs to the "new active high" segment? *Answer: 283.38*
+
+```{r q5}
+aggregate(x = cust_2015[, "monvalue"], by = list(cust_2015$segment), mean)
+```

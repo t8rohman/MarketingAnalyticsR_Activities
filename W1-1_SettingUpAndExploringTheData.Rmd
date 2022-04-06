@@ -1,0 +1,75 @@
+---
+title: "W1-1_SettingUpAndExploringTheData"
+author: "Taufiqur Rohman"
+date: '2022-03-31'
+output: html_document
+---
+
+Read the data using read.delim, because the txt source file is separated by tab.
+
+```{r read data frame}
+df_purchase <- read.delim("purchases.txt", header = FALSE, sep = "\t", dec = ".")
+```
+
+Display what has loaded in the data
+
+```{r explore data}
+head(df_purchase) # Check first 5 first records
+summary(df_purchase) # Check mean, median, max, min, etc.
+str(df_purchase) # Check the data type
+```
+
+I found that there are no column names in the data. So, I label all of the columns using the colnames() function.
+
+```{r adding column names}
+colnames(df_purchase) <- c("cust_id", "purchase_amt", "date_of_purchase")
+```
+
+I also found that the the data format of "date_of_purchase" is still numeric. Let's convert it to date.
+
+```{r converting to date format}
+df_purchase$date_of_purchase <- as.Date(df_purchase$date_of_purchase, "%Y-%m-%d")
+df_purchase$year_of_purchase <- as.numeric(format(df_purchase$date_of_purchase, "%Y"))
+```
+
+Let's check it out again the end to confirm the data set is clean and ready to be analyzed.
+
+```{r explore data again}
+head(df_purchase)
+summary(df_purchase)
+str(df_purchase)
+```
+
+In the course, they said me to explore the database using the SQL statements. So, let's explore the summary of the data using the SQL statements.
+
+```{r install sqldf}
+library(sqldf)
+```
+
+```{r sql statements}
+sql_exp_1 <- sqldf("SELECT 
+                      year_of_purchase, 
+                      COUNT(year_of_purchase) AS 'counter',
+                      AVG(purchase_amt) AS 'avg_purchase',
+                      SUM(purchase_amt) AS 'total_purchase'
+                    FROM 
+                      df_purchase
+                    GROUP BY
+                      1
+                    ORDER BY
+                      1")
+```
+
+In the end, let's visualize them into a bar plot to make it easier to understand by the audience.
+
+```{r visualization}
+# How many purchases over year
+barplot(sql_exp_1$counter, names.arg = sql_exp_1$year_of_purchase)
+
+# Average purchases amount every year
+barplot(sql_exp_1$avg_purchase, names.arg = sql_exp_1$year_of_purchase)
+
+# Total amount of purchases every year
+barplot(sql_exp_1$counter, names.arg = sql_exp_1$year_of_purchase)
+```
+

@@ -1,0 +1,174 @@
+---
+title: "W4-2_QuizModule3"
+author: "Taufiqur Rohman"
+date: '2022-04-04'
+output: html_document
+---
+
+To validate Module 3 and correctly answer the questions will require that you perform the following exercise first: take the code in the file named module3.R, and modify the probability model such as the predictors taken into account exclusively include (1) recency, (2) the log of recency, (3) frequency, (4) the log of frequency. Also, list the detailed predictions made for the first 10 customers.
+
+First, I will modify some of the codes based on what the problem requires me to do.
+
+## Reading and Cleaning the Data
+
+```{r read data frame}
+df_purchase <- read.delim("purchases.txt", header = FALSE, sep = "\t", dec = ".")
+colnames(df_purchase) <- c("cust_id", "purchase_amt", "date_of_purchase")
+
+# Converting data format and adding Recency column
+df_purchase$date_of_purchase <- as.Date(df_purchase$date_of_purchase, "%Y-%m-%d")
+df_purchase$days_since <- as.numeric(difftime(time1 = "2016-01-01",
+                                           time2 = df_purchase$date_of_purchase,
+                                           units = "days"))
+```
+
+```{r creating 2014 customer data}
+cust_2014 <- sqldf("SELECT
+                    cust_id, 
+                    MIN(days_since) - 365 AS 'recency',
+                    MAX(days_since) - 365 AS 'first_purchase',
+                    COUNT(*) AS 'frequency',
+                    AVG(purchase_amt) AS 'monvalue',
+                    MAX(purchase_amt) AS 'maxvalue'
+                  FROM
+                    df_purchase
+                  WHERE
+                    days_since > 365
+                  GROUP BY
+                    cust_id")
+```
+
+```{r create 2015 revenue data frame}
+df_purchase$year_of_purchase <- format(df_purchase$date_of_purchase, format="%Y")
+
+rev_2015 <- sqldf("SELECT
+                    cust_id,
+                    SUM(purchase_amt) AS 'rev_2015'
+                  FROM
+                    df_purchase
+                  WHERE
+                    year_of_purchase = '2015'
+                  GROUP BY
+                    cust_id")
+```
+
+## Creating the model
+
+```{r building the model}
+df_train <- merge(cust_2014, rev_2015, all.x = TRUE)
+df_train$rev_2015[is.na(df_train$rev_2015)] = 0
+df_train$active_2015 <- as.numeric(df_train$rev_2015 > 0) # Convert TRUE or FALSE to binary 1 or 0
+
+# Checking the data
+head(df_train)
+summary(df_train)
+```
+
+Here is the part where I should make a change. I must change the independent variable to recency, log of recency, frequency, and log of frequency
+
+```{r model for active or inactive}
+library(nnet)
+active_model <- multinom(formula = active_2015 ~ recency + log(recency) + frequency + log(frequency), data = df_train)
+
+coef <- summary(active_model)$coefficients
+std.err  <- summary(active_model)$standard.errors
+
+print(coef)
+print(std.err)
+print(coef / std.err)
+
+# Coef / std. err : Parameter for significance value. Below or above +2 / -2 is significance
+```
+
+```{r model for expected revenue (improved accuracy)}
+df_train_mon <- df_train %>%
+  filter(active_2015 == 1)
+
+head(df_train_mon)
+summary(df_train_mon)
+
+mon_model <- lm(log(rev_2015) ~ log(monvalue) + log(maxvalue), data = df_train_mon)
+summary(mon_model)
+
+plot(x = log(df_train_mon$rev_2015), y = mon_model$fitted.values)
+```
+
+## Predict the 2015 Customer Data
+
+```{r}
+cust_2015 <- sqldf("SELECT
+                    cust_id, 
+                    MIN(days_since) AS 'recency',
+                    MAX(days_since) AS 'first_purchase',
+                    COUNT(*) AS 'frequency',
+                    AVG(purchase_amt) AS 'monvalue',
+                    MAX(purchase_amt) AS 'maxvalue'
+                  FROM
+                    df_purchase
+                  WHERE
+                    days_since > 365
+                  GROUP BY
+                    cust_id")
+```
+
+```{r}
+cust_2015$prob_predict <- predict(object = active_model, newdata = cust_2015, type = "probs")
+cust_2015$rev_predict <- exp(predict(object = mon_model, newdata = cust_2015))
+
+# Create score prediction for every customer
+cust_2015$score_predict <- cust_2015$prob_predict * cust_2015$rev_predict
+
+summary(cust_2015$prob_predict)
+summary(cust_2015$rev_predict)
+summary(cust_2015$score_predict)
+
+# Detailed predictions made for the first 10 customers
+head(cust_2015, 10)
+```
+
+## Questions : Problem to Solve
+
+In the modified model, which of the following predictors does not seem to bear a significant influence on probability predictions?
+
+```{r}
+print(coef / std.err)
+
+# Only frequency does not have a significant influence
+```
+
+Suppose a customer has a 20% probability of being active, and a predicted revenue of $200 if he is. Which of the following statements is not correct? 
+
+```{r}
+# See at the problem
+```
+
+Looking at the predictions made for the first 10 customers in the database, which of the following statements is not correct? 
+
+```{r}
+head(cust_2015, 10)
+```
+
+Among the following customers, which one is expected to be the most profitable for the firm?
+
+```{r}
+cust_2015 %>% 
+  arrange(desc(prob_predict)) %>% 
+  head(5)
+
+# I found that 119430, 9720, 10720, 109370, 6570 are the 5 most profitable customers for the company.
+
+head_10 <- head(cust_2015, 10)
+head_10 %>% 
+  arrange(desc(prob_predict))
+
+# From the top 10, I found that customer #90 is the most profitable for the company.
+```
+
+In the probability model, why is the sign of the recency parameter expected to be negative?
+
+```{r}
+print(coef / std.err)
+
+# Because recency is calculated in days since the last purchase (inverted scale).
+```
+

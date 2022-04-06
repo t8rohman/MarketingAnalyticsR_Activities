@@ -1,0 +1,152 @@
+---
+title: "W4-1_BuildingAPredictiveModel"
+author: "Taufiqur Rohman"
+date: '2022-04-04'
+output: html_document
+---
+
+**OBJECTIVE:** 
+- Creating models for predicting active or inactive, and expected revenue for the 2015 customers from the 2014 customers data.
+
+## Reading and Cleaning the Data
+
+Read the data using read.delim, because the txt source file is separated by tab. And then, similar to previous module, I give name to every columns. Also, do not forget to convert the data format of date_of_purchase into date and calculate the recency of last purchase.
+
+```{r read data frame}
+df_purchase <- read.delim("purchases.txt", header = FALSE, sep = "\t", dec = ".")
+colnames(df_purchase) <- c("cust_id", "purchase_amt", "date_of_purchase")
+
+# Converting data format and adding Recency column
+df_purchase$date_of_purchase <- as.Date(df_purchase$date_of_purchase, "%Y-%m-%d")
+df_purchase$days_since <- as.numeric(difftime(time1 = "2016-01-01",
+                                           time2 = df_purchase$date_of_purchase,
+                                           units = "days"))
+```
+
+After that, I create the 2014 customer data first.
+
+```{r creating 2014 customer data}
+cust_2014 <- sqldf("SELECT
+                    cust_id, 
+                    MIN(days_since) - 365 AS 'recency',
+                    MAX(days_since) - 365 AS 'first_purchase',
+                    COUNT(*) AS 'frequency',
+                    AVG(purchase_amt) AS 'monvalue',
+                    MAX(purchase_amt) AS 'maxvalue'
+                  FROM
+                    df_purchase
+                  WHERE
+                    days_since > 365
+                  GROUP BY
+                    cust_id")
+```
+
+Then, I collect the 2015 revenue data as the dependent variable, or the target variable.
+
+```{r create 2015 revenue data frame}
+df_purchase$year_of_purchase <- format(df_purchase$date_of_purchase, format="%Y")
+
+rev_2015 <- sqldf("SELECT
+                    cust_id,
+                    SUM(purchase_amt) AS 'rev_2015'
+                  FROM
+                    df_purchase
+                  WHERE
+                    year_of_purchase = '2015'
+                  GROUP BY
+                    cust_id")
+```
+
+## Creating the model
+
+Now, let's create the model. First, I merge the customer 2014 data and 2015 revenue data to train the model. After that, I put the binary value for the active or inactive.
+
+```{r building the model}
+df_train <- merge(cust_2014, rev_2015, all.x = TRUE)
+df_train$rev_2015[is.na(df_train$rev_2015)] = 0
+df_train$active_2015 <- as.numeric(df_train$rev_2015 > 0) # Convert TRUE or FALSE to binary 1 or 0
+
+# Checking the data
+head(df_train)
+summary(df_train)
+```
+
+Now the data is clean, let's build the model. First, to predict whether a customer will be active or inactive a year from now, I use the multinominal logistic regression.
+
+```{r model for active or inactive}
+library(nnet)
+active_model <- multinom(formula = active_2015 ~ recency + first_purchase + frequency + monvalue + maxvalue, data = df_train)
+
+coef <- summary(active_model)$coefficients
+std.err  <- summary(active_model)$standard.errors
+
+print(coef)
+print(std.err)
+print(coef / std.err) 
+
+# Coef / std. err : Parameter for significance value. Below or above +2 / -2 is significance
+```
+
+After that, I create model to predict expected revenue a year from now using linear regression model.
+
+```{r model for expected revenue} 
+df_train_mon <- df_train %>%
+  filter(active_2015 == 1)
+
+head(df_train_mon)
+summary(df_train_mon)
+
+mon_model <- lm(rev_2015 ~ monvalue + maxvalue, data = df_train_mon)
+summary(mon_model)
+```
+
+Let's test the accuracy of the model now.
+
+```{r plot for the model accuracy}
+plot(x = df_train_mon$rev_2015, y = mon_model$fitted.values)
+```
+
+I found that the data is very dispersed at the big value. Let's re calibrate the model to improve the accuracy by taking log into the predictors and target value.
+
+```{r model for expected revenue (improved accuracy)}
+mon_model <- lm(log(rev_2015) ~ log(monvalue) + log(maxvalue), data = df_train_mon)
+summary(mon_model)
+
+plot(x = log(df_train_mon$rev_2015), y = mon_model$fitted.values)
+```
+
+## Predict the 2015 Customer Data
+
+Before predicting the 2015 customer data, I want to create the 2015 customer data frame first.
+
+```{r}
+cust_2015 <- sqldf("SELECT
+                    cust_id, 
+                    MIN(days_since) AS 'recency',
+                    MAX(days_since) AS 'first_purchase',
+                    COUNT(*) AS 'frequency',
+                    AVG(purchase_amt) AS 'monvalue',
+                    MAX(purchase_amt) AS 'maxvalue'
+                  FROM
+                    df_purchase
+                  WHERE
+                    days_since > 365
+                  GROUP BY
+                    cust_id")
+```
+
+Now, let's predict the expected revenue and idle probabilty of the customers using the multinominal logistic and linear regression that I have built before.
+
+```{r}
+cust_2015$prob_predict <- predict(object = active_model, newdata = cust_2015, type = "probs")
+cust_2015$rev_predict <- exp(predict(object = mon_model, newdata = cust_2015))
+
+# Create score prediction for every customer
+cust_2015$score_predict <- cust_2015$prob_predict * cust_2015$rev_predict
+
+summary(cust_2015$prob_predict)
+summary(cust_2015$rev_predict)
+summary(cust_2015$score_predict)
+```
+
+Looking from the summary, I know that the expected revenue from every customer one year from 2015 will be around 63.25 dollar. Also, there will be a customer that spend around 3800 dollar which is very high. The minimum a customer will spend is 6.54 dollar.

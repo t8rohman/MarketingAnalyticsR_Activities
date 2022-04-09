@@ -1,0 +1,216 @@
+---
+title: "W5-1_CreatingTransitionMatrix"
+author: "Taufiqur Rohman"
+date: '2022-04-05'
+output: html_document
+---
+
+**OBJECTIVE:**
+- Creating segmentation transition matrix
+- Making a model to calculate Customer Lifetime Value (CLV)
+
+## Reading and Cleaning Data Frame
+
+First, I load the data first into the R environment.
+
+```{r reading and cleaning data}
+df_purchase <- read.delim("purchases.txt", header = FALSE, sep = "\t", dec = ".")
+colnames(df_purchase) <- c("cust_id", "purchase_amt", "date_of_purchase")
+
+# Converting data format and adding Recency column
+df_purchase$date_of_purchase <- as.Date(df_purchase$date_of_purchase, "%Y-%m-%d")
+df_purchase$days_since <- as.numeric(difftime(time1 = "2016-01-01",
+                                           time2 = df_purchase$date_of_purchase,
+                                           units = "days"))
+```
+
+After that, like the previous module, I create the 2015 and 2014 customer data.
+
+```{r creating data frame for 2014 and 2015 customers}
+# Load the library
+library(sqldf)
+
+# Create the 2015 customer data frame
+cust_2015 <- sqldf("SELECT
+                    cust_id, 
+                    MIN(days_since) AS 'recency',
+                    MAX(days_since) AS 'first_purchase',
+                    COUNT(*) AS 'frequency',
+                    AVG(purchase_amt) AS 'monvalue'
+                  FROM
+                    df_purchase
+                  GROUP BY
+                    cust_id")
+
+# Create the 2014 customer data frame
+
+cust_2014 <- sqldf("SELECT
+                    cust_id, 
+                    MIN(days_since) - 365 AS 'recency',
+                    MAX(days_since) - 365 AS 'first_purchase',
+                    COUNT(*) AS 'frequency',
+                    AVG(purchase_amt) AS 'monvalue'
+                  FROM
+                    df_purchase
+                  WHERE
+                    days_since > 365
+                  GROUP BY
+                    cust_id")
+```
+
+After the data is loaded and data frame for 2015 and 2014 customer data is made, I made segmentation data frame for 2015 and 2014 customers data.
+
+```{r generating segmentation}
+# Reset the variable first
+cust_2015$segment = "NA"
+cust_2014$segment = "NA"
+
+# Create the 2015 segmentation
+cust_2015$segment[which(cust_2015$recency > 365*3)] = "inactive"
+cust_2015$segment[which(cust_2015$recency <= 365*3 & cust_2015$recency > 365*2)] = "cold"
+cust_2015$segment[which(cust_2015$recency <= 365*2 & cust_2015$recency > 365*1)] = "warm"
+cust_2015$segment[which(cust_2015$recency <= 365)] = "active"
+cust_2015$segment[which(cust_2015$segment == "warm" & cust_2015$first_purchase <= 365*2)] = "new warm"
+cust_2015$segment[which(cust_2015$segment == "warm" & cust_2015$monvalue < 100)] = "warm low value"
+cust_2015$segment[which(cust_2015$segment == "warm" & cust_2015$monvalue >= 100)] = "warm high value"
+cust_2015$segment[which(cust_2015$segment == "active" & cust_2015$first_purchase <= 365)] = "new active"
+cust_2015$segment[which(cust_2015$segment == "active" & cust_2015$monvalue < 100)] = "active low value"
+cust_2015$segment[which(cust_2015$segment == "active" & cust_2015$monvalue >= 100)] = "active high value"
+
+cust_2015$segment = factor(x = cust_2015$segment, 
+                           levels = c("inactive", "cold", "warm high value", "warm low value", "new warm", "active high value", "active low value", "new active"))
+
+# Create the 2014 segmentation
+cust_2014$segment[which(cust_2014$recency > 365*3)] = "inactive"
+cust_2014$segment[which(cust_2014$recency <= 365*3 & cust_2014$recency > 365*2)] = "cold"
+cust_2014$segment[which(cust_2014$recency <= 365*2 & cust_2014$recency > 365*1)] = "warm"
+cust_2014$segment[which(cust_2014$recency <= 365)] = "active"
+cust_2014$segment[which(cust_2014$segment == "warm" & cust_2014$first_purchase <= 365*2)] = "new warm"
+cust_2014$segment[which(cust_2014$segment == "warm" & cust_2014$monvalue < 100)] = "warm low value"
+cust_2014$segment[which(cust_2014$segment == "warm" & cust_2014$monvalue >= 100)] = "warm high value"
+cust_2014$segment[which(cust_2014$segment == "active" & cust_2014$first_purchase <= 365)] = "new active"
+cust_2014$segment[which(cust_2014$segment == "active" & cust_2014$monvalue < 100)] = "active low value"
+cust_2014$segment[which(cust_2014$segment == "active" & cust_2014$monvalue >= 100)] = "active high value"
+
+cust_2014$segment = factor(x = cust_2014$segment, 
+                           levels = c("inactive", "cold", "warm high value", "warm low value", "new warm", "active high value", "active low value", "new active"))
+
+# Check the result
+table(cust_2015$segment)
+cust2015agg <- aggregate(x = cust_2015[, 2:5], by = list(cust_2015$segment), mean)
+
+table(cust_2014$segment)
+cust2014agg <- aggregate(x = cust_2014[, 2:5], by = list(cust_2014$segment), mean)
+```
+
+This is the important thing. I create the transition matrix first to know rate of consumer conversion from one segment to another.
+
+```{r creating transition matrix}
+df_trans <- merge(x = cust_2014, y = cust_2015, by = "cust_id", all.x = TRUE)
+head(df_trans)
+colnames(df_trans)
+
+# Calculate the proportion
+trans_matrix <- table(df_trans$segment.x, df_trans$segment.y)
+print(trans_matrix)
+
+# Convert it into percentage
+trans_matrix <- trans_matrix / rowSums(trans_matrix)
+print(trans_matrix)
+```
+
+The data is ready now and I can start calculating the expected customer lifetime value.
+
+## Calculating the Expected CLV 
+
+First, let's set up the matrix table for multiplier of the transition matrix.
+
+```{r creating the matrix for the multiplier}
+# Create a multiplier matrix first
+# 8 rows for number of segments
+# 11 columns for number of period we want to predict, until 2025
+multiplier <- matrix(nrow = 8, ncol = 11)
+
+# Inputting the present data to the matrix
+multiplier[, 1] = table(cust_2015$segment)
+
+# Giving column names, 2015 until 2025
+colnames(multiplier) <- 2015 : 2025
+
+# Giving row names by the segment
+row.names(multiplier) <- levels(cust_2015$segment)
+```
+
+To calculate the customer lifetime value, multiply the trans_matrix table by the multiplier table. The result shown below.
+
+```{r predicting customer lifetime value}
+for (i in 2:11) {
+   multiplier[, i] = multiplier[, i-1] %*% trans_matrix
+}
+```
+
+Let's explore some data inside of it. 
+
+```{r creating the barplot}
+barplot(multiplier["inactive", ], 
+        main = "Expected Inactive Customers", xlab = "Years", ylab = "Number of Customers")
+barplot(multiplier["cold", ], 
+        main = "Expected Cold Customers", xlab = "Years", ylab = "Number of Customers")
+```
+
+## Computing Customer Lifetime Value
+
+Let's now calculate the customer lifetime value, which is the main objective of this analysis. First, let's put the revenue data in the vector and calculate revenue per segment, revenue per year, and cumulated revenue
+
+```{r computing expected revenue generated by customer}
+# Revenue data per segment is readily available, just put it into vector
+rev_annual <- c(0, 0, 0, 0, 0, 323.57, 52.31, 79.17)
+
+# Compute revenue per segment
+rev_segment <- rev_annual * multiplier
+print(rev_segment)
+
+# Revenue per year
+rev_annual <- colSums(rev_segment)
+print(round(rev_annual))
+barplot(rev_annual)
+
+# Cumulated revenue
+rev_cumulated <- cumsum(rev_annual)
+print(rev_cumulated)
+barplot(rev_cumulated)
+```
+
+**REMEMBER** that the future value of the money will be decreasing from time to time because of the inflation. Let's calculate the discount factor with inflation rate at 10% a year.
+
+```{r create discount factor}
+disc_rate <- 0.10
+disc = 1 / ((1 + disc_rate) ^ ((1:11) - 1))
+print(disc)
+```
+
+Now, multiply the discount factor with the revenue data that I have calculated earlier.
+
+```{r computing discounted revenue}
+# Discounted revenue per year
+disc_rev_annual <- rev_annual * disc
+print(disc_rev_annual)
+barplot(disc_rev_annual)
+
+# Discounted cumulated revenue per year
+disc_rev_cumulated <- cumsum(disc_rev_annual)
+print(disc_rev_cumulated)
+barplot(disc_rev_cumulated)
+
+# Comparing discounted vs. undiscounted revenue per year
+barplot(disc_rev_annual)
+lines(rev_annual)
+```
+
+For the conclusion, let's calculate how much money we can expect from current customers 10 years from now.
+
+```{r expected total revenue}
+disc_rev_cumulated[11] - disc_rev_cumulated[1]
+```
+
+We can expect that in 10 years from now, the company will get 2,150,640 dollar from the current customers.
